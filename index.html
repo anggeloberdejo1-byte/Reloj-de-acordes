@@ -1038,16 +1038,21 @@
         const notasAcorde = new Set(intervalos.map(iv => (raizIdx+iv)%12));
         const bajoEsNotaDelAcorde = notasAcorde.has(bajoPc);
 
-        // Inversión propia (3ra/5ta en el bajo): exigir que domine con claridad
-        // (relación alta), porque estas notas suenan seguido sin ser inversión.
-        // Slash ajeno (bajo fuera del acorde): más significativo, umbral menor,
-        // pero el bajo debe ser diatónico de la tonalidad para no marcar ruido.
+        // Inversión propia (3ra/5ta en el bajo) o slash ajeno (bajo fuera del
+        // acorde): ambos válidos. Umbrales relativamente permisivos para que
+        // las inversiones aparezcan cuando el bajo se distingue, sin exigir
+        // tanto que casi nunca se marquen.
         let dominaSuficiente;
         if(bajoEsNotaDelAcorde){
-          dominaSuficiente = top[0] >= segundo[0]*1.35;
+          // Inversión propia: basta con que el bajo domine con cierta claridad.
+          dominaSuficiente = top[0] >= segundo[0]*1.15;
         } else {
+          // Slash ajeno: aún más significativo. Se prefiere (pero no se exige)
+          // que el bajo sea diatónico; si no lo es, se pide algo más de dominio.
           const bajoDiatonico = tonalidad.diatonico.has(bajoPc);
-          dominaSuficiente = bajoDiatonico && top[0] >= segundo[0]*1.25;
+          dominaSuficiente = bajoDiatonico
+            ? top[0] >= segundo[0]*1.12
+            : top[0] >= segundo[0]*1.4;
         }
         if(dominaSuficiente) seg.acorde = seg.acorde + "/" + NOTAS[bajoPc];
       });

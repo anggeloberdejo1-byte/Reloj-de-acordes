@@ -1875,6 +1875,33 @@
     if(analisisActual) reAnalizar();
   }
 
+  // Lee un File a ArrayBuffer usando FileReader (más compatible con Safari/iOS
+  // que file.arrayBuffer()), con un tiempo límite para no colgarse.
+  function leerArchivoConTimeout(file, ms){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      const timer = setTimeout(() => { try{reader.abort();}catch(e){}; reject(new Error("timeout-lectura")); }, ms);
+      reader.onload = () => { clearTimeout(timer); resolve(reader.result); };
+      reader.onerror = () => { clearTimeout(timer); reject(reader.error || new Error("error-lectura")); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // decodeAudioData con timeout y soporte para ambas formas de la API
+  // (promesa moderna y callbacks del Safari viejo).
+  function decodificarConTimeout(ctx, arrayBuffer, ms){
+    return new Promise((resolve, reject) => {
+      let listo = false;
+      const timer = setTimeout(() => { if(!listo){ listo=true; reject(new Error("timeout-decode")); } }, ms);
+      const ok = (buf) => { if(!listo){ listo=true; clearTimeout(timer); resolve(buf); } };
+      const fail = (e) => { if(!listo){ listo=true; clearTimeout(timer); reject(e||new Error("decode-fail")); } };
+      try{
+        const p = ctx.decodeAudioData(arrayBuffer.slice(0), ok, fail);
+        if(p && typeof p.then === "function") p.then(ok).catch(fail);
+      }catch(e){ fail(e); }
+    });
+  }
+
   async function procesarArchivo(file){
     errorMsg.classList.add("oculto");
     $("panelCarga").classList.remove("oculto");
@@ -1883,23 +1910,22 @@
     progresoTexto.textContent = "Leyendo archivo...";
 
     try{
-      const arrayBuffer = await file.arrayBuffer();
+      // Leer el archivo. file.arrayBuffer() a veces se cuelga en Safari/iOS con
+      // archivos grandes; FileReader es más compatible. Se corre con timeout.
+      progresoTexto.textContent = "Leyendo archivo...";
+      const arrayBuffer = await leerArchivoConTimeout(file, 30000);
+
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if(!AudioCtx) throw new Error("sin-audiocontext");
       const ctx = new AudioCtx();
       // En iOS (Safari) el AudioContext puede arrancar "suspendido" hasta que
       // hay un gesto del usuario; reactivarlo evita fallos de decodificación.
       if(ctx.state === "suspended"){ try{ await ctx.resume(); }catch(e){} }
 
-      // decodeAudioData: usar forma con promesa, pero envolver para dar un
-      // mensaje claro si el formato (a veces m4a de iPhone) no se puede leer.
-      let audioBuffer;
-      try{
-        audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-      }catch(e){
-        // Safari viejo usa la forma con callbacks; intentar como respaldo.
-        audioBuffer = await new Promise((res,rej)=>
-          ctx.decodeAudioData(arrayBuffer.slice(0), res, rej));
-      }
+      progresoTexto.textContent = "Decodificando audio...";
+      // decodeAudioData con timeout: en iOS puede quedarse colgado sin fallar
+      // ni completar con algunos mp3. El timeout evita el cuelgue infinito.
+      const audioBuffer = await decodificarConTimeout(ctx, arrayBuffer, 45000);
 
       let mono;
       if(audioBuffer.numberOfChannels>1){
@@ -1937,7 +1963,12 @@
     } catch(err){
       console.error(err);
       progresoWrap.classList.remove("activo");
-      errorMsg.textContent = "No se pudo leer el archivo. Si estás en iPhone, probá con un mp3, o convertí el archivo a mp3/wav. Algunos m4a protegidos (comprados en iTunes) no se pueden analizar.";
+      const msg = (err && err.message) || "";
+      if(msg.indexOf("timeout") >= 0){
+        errorMsg.textContent = "El archivo tardó demasiado en procesarse. Puede ser muy largo o pesado para este teléfono. Probá con una canción más corta, o un mp3 de menor tamaño.";
+      } else {
+        errorMsg.textContent = "No se pudo leer el archivo. Si estás en iPhone, probá con un mp3 normal, o convertí el archivo a mp3/wav. Algunos m4a protegidos (comprados en iTunes) no se pueden analizar.";
+      }
       errorMsg.classList.remove("oculto");
     }
   }

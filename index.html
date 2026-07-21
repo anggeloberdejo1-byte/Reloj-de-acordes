@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Reloj de Acordes">
+<link rel="manifest" href="./manifest.json">
 <style>
   /* ---- Sistema de temas: claro (default) y oscuro ----
      El tema se cambia poniendo data-tema="oscuro" en <html>. El dial se
@@ -394,7 +395,7 @@
       <div class="icono">♪</div>
       <p><strong>Hacé clic o arrastrá un archivo de audio acá</strong></p>
       <p>mp3, wav, m4a, ogg, flac</p>
-      <input type="file" id="inputArchivo" accept="audio/*">
+      <input type="file" id="inputArchivo" accept=".mp3,.m4a,.wav,.aac,.ogg,.flac,.aiff,.aif,.caf,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/x-wav,audio/ogg,audio/flac,audio/*">
     </div>
     <div class="progreso-wrap" id="progresoWrap">
       <div class="barra-fondo"><div class="barra-relleno" id="barraRelleno"></div></div>
@@ -1885,7 +1886,20 @@
       const arrayBuffer = await file.arrayBuffer();
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioCtx();
-      const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      // En iOS (Safari) el AudioContext puede arrancar "suspendido" hasta que
+      // hay un gesto del usuario; reactivarlo evita fallos de decodificación.
+      if(ctx.state === "suspended"){ try{ await ctx.resume(); }catch(e){} }
+
+      // decodeAudioData: usar forma con promesa, pero envolver para dar un
+      // mensaje claro si el formato (a veces m4a de iPhone) no se puede leer.
+      let audioBuffer;
+      try{
+        audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      }catch(e){
+        // Safari viejo usa la forma con callbacks; intentar como respaldo.
+        audioBuffer = await new Promise((res,rej)=>
+          ctx.decodeAudioData(arrayBuffer.slice(0), res, rej));
+      }
 
       let mono;
       if(audioBuffer.numberOfChannels>1){
@@ -1923,7 +1937,7 @@
     } catch(err){
       console.error(err);
       progresoWrap.classList.remove("activo");
-      errorMsg.textContent = "No se pudo procesar el archivo (" + (err.message||err) + "). Probá con otro formato (mp3, wav, m4a).";
+      errorMsg.textContent = "No se pudo leer el archivo. Si estás en iPhone, probá con un mp3, o convertí el archivo a mp3/wav. Algunos m4a protegidos (comprados en iTunes) no se pueden analizar.";
       errorMsg.classList.remove("oculto");
     }
   }
@@ -2178,6 +2192,18 @@
   renderizarLetra();
 
 })();
+</script>
+<script>
+  // Registrar el Service Worker para funcionamiento offline.
+  // Solo funciona servido por https (GitHub Pages), no al abrir el archivo local.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").catch(() => {
+        // Silencioso: si falla (ej. abierto como archivo local), la app
+        // funciona igual, solo sin caché offline.
+      });
+    });
+  }
 </script>
 </body>
 </html>
